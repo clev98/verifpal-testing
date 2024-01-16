@@ -1,0 +1,126 @@
+// Off-the-Record Messaging Protocol V3
+
+// TODO: Will need to find some open source implimentation 
+// to ensure assumptions are correct.
+
+attacker[active]
+
+// AKE
+principal Bob[
+    knows private c_salt, c_prime_salt
+    knows private m1_salt, m1_prime_salt, m2_salt, m2_prime_salt
+    // Alice and Bob's long term authentication public keys
+    knows public pub_A, pub_B
+    // r - Encryption key
+    // x - DH factor
+    generates r, x
+    // keyid_B - serial number for DH key gx
+    generates keyid_B
+    gx = G^x
+    gx_enc = ENC(r, gx)
+    gx_hash = HASH(gx)
+]
+
+Bob -> Alice: gx_enc, gx_hash
+
+principal Alice[
+    knows private c_salt, c_prime_salt
+    knows private m1_salt, m1_prime_salt, m2_salt, m2_prime_salt
+    // Alice and Bob's long term authentication public keys
+    knows public pub_A, pub_B
+    // y - DH factor
+    generates y
+    // create seial number for GH key gy
+    generates keyid_A
+    gy = G^y
+]
+
+Alice -> Bob: gy
+
+principal Bob[
+    // s - DH key
+    s_B = gy^x
+    // AES keys
+    knows private c_B
+    knows private c_prime_B
+    // MAC keys
+    knows private m1_B
+    knows private m1_prime_B
+    knows private m2_B 
+    knows private m2_prime_B
+
+    M_B = MAC(m1_B, CONCAT(gx, gy, pub_B, keyid_B))
+    // I think this is correct? 
+    X_B = CONCAT(pub_B, keyid_B, SIGN(pub_B, M_B))
+    X_B_Enc = ENC(c_B, X_B)
+    X_B_Enc_Mac = MAC(m2_B, X_B_Enc)
+]
+
+Bob -> Alice: r, X_B_Enc, X_B_Enc_Mac
+
+principal Alice[
+    gx_dec = DEC(r, gx_enc)
+
+    // Verify gx hasn't been tampered with
+    macValid1 = ASSERT(HASH(gx_dec), gx_hash)?
+
+    // Create shared key
+    s_A = gx_dec^y
+
+    // AES keys
+    knows private c_B
+    knows private c_prime_B
+    // MAC keys
+    knows private m1_B
+    knows private m1_prime_B
+    knows private m2_B 
+    knows private m2_prime_B
+
+    // Verify X_B MAC from Bob == MAC(X_B_Enc)
+    macValid2 = ASSERT(MAC(m2_B, X_B_Enc), X_B_Enc_Mac)?
+
+    // Decrypt Bob's message
+    X_B_Dec = DEC(c_B, X_B_Enc)
+
+    // Extract information
+    pub_B_Dec, keyid_B_Dec, sig_B_Dec = SPLIT(X_B_Dec)
+
+    // Alice creates own M_B with same information 
+    M_B_Alice = MAC(m1_B, CONCAT(gx_dec, gy, pub_B_Dec, keyid_B_Dec))
+
+    // Assert Bob's send M_B == Alice's M_B
+    sigValid1 = ASSERT(SIGN(pub_B_Dec, M_B_Alice), sig_B_Dec)?
+
+    // Create MAC of key information for Bob
+    M_A = MAC(m1_prime_B, CONCAT(gy, gx_dec, pub_A, keyid_A))
+
+    // Create key information message for Bob
+    X_A = CONCAT(pub_A, keyid_A, SIGN(pub_A, M_A))
+    X_A_Enc = ENC(c_prime_B, X_A)
+    X_A_Enc_Mac = MAC(m2_prime_B, X_A_Enc)
+]
+
+Alice -> Bob: X_A_Enc, X_A_Enc_Mac
+
+principal Bob[
+    // Verify X_A has not be altered
+    macValid3 = ASSERT(MAC(m2_prime_B, X_A_Enc), X_A_Enc_Mac)?
+
+    // Decrypt X_A and extract key info
+    X_A_Dec = DEC(c_prime_B, X_A_Enc)
+    pub_A_Dec, keyid_A_Dec, sig_A_Dec = SPLIT(X_A_Dec)
+
+    // Verify M_A has not been altered
+    M_A_Bob = MAC(m1_prime_B, CONCAT(gy, gx, pub_A_Dec, keyid_A_Dec))
+    sigValid2 = ASSERT(SIGN(pub_A_Dec, M_A_Bob), sig_A_Dec)?
+]
+
+principal Alice[leaks c_B]
+principal Alice[leaks c_prime_B]
+
+queries[
+    confidentiality? s_A
+    confidentiality? s_B
+    authentication? Bob -> Alice: X_B_Enc
+    authentication? Alice -> Bob: X_A_Enc
+]
